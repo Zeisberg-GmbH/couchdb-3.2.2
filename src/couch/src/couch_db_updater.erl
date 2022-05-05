@@ -37,7 +37,12 @@ init({Engine, DbName, FilePath, Options0}) ->
     erlang:put(io_priority, {db_update, DbName}),
     update_idle_limit_from_config(),
     DefaultSecObj = default_security_object(DbName),
-    Options = [{default_security_object, DefaultSecObj} | Options0],
+    Options =
+        [{default_security_object, DefaultSecObj} | Options0] ++
+            case couch_encryption_manager:key_id(DbName) of
+                false -> [];
+                KeyID -> [{key_id, KeyID}]
+            end,
     try
         {ok, EngineState} = couch_db_engine:init(Engine, FilePath, Options),
         Db = init_db(DbName, FilePath, EngineState, Options),

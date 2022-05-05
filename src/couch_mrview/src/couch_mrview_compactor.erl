@@ -47,7 +47,12 @@ compact(State) ->
 
     {EmptyState, NumDocIds} = couch_util:with_db(DbName, fun(Db) ->
         CompactFName = couch_mrview_util:compaction_file(DbName, Sig),
-        {ok, Fd} = couch_mrview_util:open_file(CompactFName),
+        Options =
+            case couch_encryption_manager:key_id(DbName) of
+                false -> [];
+                KeyID -> [{key_id, KeyID}]
+            end,
+        {ok, Fd} = couch_mrview_util:open_file(CompactFName, Options),
         ESt = couch_mrview_util:reset_index(Db, Fd, State),
 
         {ok, Count} = couch_db:get_doc_count(Db),

@@ -120,7 +120,12 @@ open(Db, State0) ->
 
     OldSig = couch_mrview_util:maybe_update_index_file(State),
 
-    case couch_mrview_util:open_file(IndexFName) of
+    Options =
+        case couch_encryption_manager:key_id(DbName) of
+            false -> [];
+            KeyID -> [{key_id, KeyID}]
+        end,
+    case couch_mrview_util:open_file(IndexFName, Options) of
         {ok, Fd} ->
             case couch_file:read_header(Fd) of
                 % upgrade code for <= 2.x
