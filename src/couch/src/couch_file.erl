@@ -484,12 +484,20 @@ init({Filepath, Options, ReturnPid, Ref}) ->
                                     ok = file:sync(Fd),
                                     maybe_track_open_os_files(Options),
                                     erlang:send_after(?INITIAL_WAIT, self(), maybe_close),
-                                    init_crypto(
-                                        #file{
-                                            fd = Fd, is_sys = IsSys, pread_limit = Limit
-                                        },
-                                        Options
-                                    );
+                                    case
+                                        init_crypto(
+                                            Filepath,
+                                            #file{
+                                                fd = Fd, is_sys = IsSys, pread_limit = Limit
+                                            },
+                                            Options
+                                        )
+                                    of
+                                        {ok, File} ->
+                                            {ok, File};
+                                        Error ->
+                                            init_status_error(ReturnPid, Ref, Error)
+                                    end;
                                 false ->
                                     ok = file:close(Fd),
                                     init_status_error(ReturnPid, Ref, {error, eexist})
@@ -497,12 +505,20 @@ init({Filepath, Options, ReturnPid, Ref}) ->
                         false ->
                             maybe_track_open_os_files(Options),
                             erlang:send_after(?INITIAL_WAIT, self(), maybe_close),
-                            init_crypto(
-                                #file{
-                                    fd = Fd, is_sys = IsSys, pread_limit = Limit
-                                },
-                                Options
-                            )
+                            case
+                                init_crypto(
+                                    Filepath,
+                                    #file{
+                                        fd = Fd, is_sys = IsSys, pread_limit = Limit
+                                    },
+                                    Options
+                                )
+                            of
+                                {ok, File} ->
+                                    {ok, File};
+                                Error ->
+                                    init_status_error(ReturnPid, Ref, Error)
+                            end
                     end;
                 Error ->
                     init_status_error(ReturnPid, Ref, Error)
@@ -519,12 +535,20 @@ init({Filepath, Options, ReturnPid, Ref}) ->
                             maybe_track_open_os_files(Options),
                             {ok, Eof} = file:position(Fd, eof),
                             erlang:send_after(?INITIAL_WAIT, self(), maybe_close),
-                            init_crypto(
-                                #file{
-                                    fd = Fd, eof = Eof, is_sys = IsSys, pread_limit = Limit
-                                },
-                                Options
-                            );
+                            case
+                                init_crypto(
+                                    Filepath,
+                                    #file{
+                                        fd = Fd, eof = Eof, is_sys = IsSys, pread_limit = Limit
+                                    },
+                                    Options
+                                )
+                            of
+                                {ok, File} ->
+                                    {ok, File};
+                                Error ->
+                                    init_status_error(ReturnPid, Ref, Error)
+                            end;
                         Error ->
                             init_status_error(ReturnPid, Ref, Error)
                     end;
@@ -993,7 +1017,7 @@ reset_eof(#file{} = File) ->
     File#file{eof = Eof}.
 
 %% new file.
-init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
+init_crypto(_Filepath, #file{eof = 0, dek = undefined} = File0, Options) ->
     case lists:keyfind(db_name, 1, Options) of
         {db_name, DbName} ->
             case couch_encryption_manager:new_dek(DbName) of
@@ -1015,12 +1039,28 @@ init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
             {ok, File0}
     end;
 %% we're opening an existing file and need to unwrap the key if file is encrypted.
-init_crypto(#file{eof = Eof, dek = undefined} = File, _Options) when Eof >= ?SIZE_BLOCK ->
+init_crypto(Filepath, #file{eof = Eof, dek = undefined} = File, _Options) when Eof >= ?SIZE_BLOCK ->
     case read_encryption_header(File) of
         {ok, {KeyID, WEK, IV}} ->
             case couch_encryption_manager:unwrap_dek(KeyID, WEK) of
                 {ok, DEK} ->
                     {ok, init_crypto_file(File, DEK, IV)};
+                {ok, NewKeyID, DEK, NewWEK} ->
+                    %% manager has rewrapped the DEK with a new key, update our header.
+                    case file:open(Filepath, [read, write, raw]) of
+                        {ok, Fd} ->
+                            case write_encryption_header(#file{fd = Fd}, NewKeyID, NewWEK, IV) of
+                                ok ->
+                                    ok = file:sync(Fd),
+                                    ok = file:close(Fd),
+                                    {ok, init_crypto_file(File, DEK, IV)};
+                                {error, Reason} ->
+                                    ok = file:close(Fd),
+                                    {error, Reason}
+                            end;
+                        {error, Reason} ->
+                            {error, Reason}
+                    end;
                 {error, Reason} ->
                     {error, Reason}
             end;

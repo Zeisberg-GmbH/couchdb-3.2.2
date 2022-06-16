@@ -14,7 +14,10 @@
 
 -export([new_dek/1, unwrap_dek/2, encryption_options/1]).
 
--spec new_dek(DbName :: binary()) -> {ok, KeyID :: binary(), DEK :: binary(), WEK :: binary()} | dont_encrypt | {error, Reason :: term()}.
+-spec new_dek(DbName :: binary()) ->
+    {ok, KeyID :: binary(), DEK :: binary(), WEK :: binary()}
+    | dont_encrypt
+    | {error, Reason :: term()}.
 new_dek(_DbName) ->
     KeyID = <<"default">>,
     KEK = <<0:256>>,
@@ -23,7 +26,10 @@ new_dek(_DbName) ->
 new_dek(_) ->
     {error, invalid_key_id}.
 
--spec unwrap_dek(KeyID :: binary(), WEK :: binary()) -> {ok, DEK :: binary()} | {error, Reason :: term()}.
+-spec unwrap_dek(KeyID :: binary(), WEK :: binary()) ->
+    {ok, DEK :: binary()}
+    | {ok, NewKeyID :: binary(), DEK :: binary(), NewWEK :: binary()}
+    | {error, Reason :: term()}.
 unwrap_dek(<<"default">> = KeyID, WEK) ->
     KEK = <<0:256>>,
     unwrap_key(KeyID, KEK, WEK).
