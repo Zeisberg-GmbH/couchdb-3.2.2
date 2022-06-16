@@ -1018,7 +1018,7 @@ init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
 init_crypto(#file{eof = Eof, dek = undefined} = File, _Options) when Eof >= ?SIZE_BLOCK ->
     case read_encryption_header(File) of
         {ok, {KeyID, WEK, IV}} ->
-            case couch_encryption_manager:unwrap_dek(KeyID, WEK) of                
+            case couch_encryption_manager:unwrap_dek(KeyID, WEK) of
                 {ok, DEK} ->
                     {ok, init_crypto_file(File, DEK, IV)};
                 {error, Reason} ->
@@ -1061,23 +1061,31 @@ read_encryption_header(#file{} = File) ->
                     {ok, Header};
                 {{ok, Header1}, {ok, Header2}} ->
                     couch_log:warning(
-                        "~s: Header version differences.~nPrimary Header: ~p~nSecondary Header: ~p",
+                        "~s: Encryption header version differences.~nPrimary header: ~p~nSecondary header: ~p. Using primary header",
                         [Filepath, Header1, Header2]
                     ),
                     {ok, Header1};
-                {{ok, Header}, {error, corrupted_header}} ->
-                    couch_log:warning("~s: Secondary header corruption. Using primary header.", [
-                        Filepath
-                    ]),
+                {{ok, Header}, {error, Reason}} ->
+                    couch_log:warning(
+                        "~s: Secondary encryption header corruption (error: ~p). Using primary header.",
+                        [
+                            Filepath, Reason
+                        ]
+                    ),
                     {ok, Header};
-                {{error, corrupted_header}, {ok, Header}} ->
-                    couch_log:warning("~s: Primary header corruption. Using secondary header.", [
-                        Filepath
-                    ]),
+                {{error, Reason}, {ok, Header}} ->
+                    couch_log:warning(
+                        "~s: Primary encryption header corruption (error: ~p). Using secondary header.",
+                        [
+                            Filepath, Reason
+                        ]
+                    ),
                     {ok, Header};
-                {{error, corrupted_header}, {error, corrupted_header}} ->
-                    couch_log:error("~s: Both headers corrupted.", [Filepath]),
-                    {error, corrupted_header}
+                {{error, Reason1}, {error, Reason2}} ->
+                    couch_log:error("~s: Both encryption headers corrupted (errors: ~p, ~p).", [
+                        Filepath, Reason1, Reason2
+                    ]),
+                    {error, corrupted_encryption_header}
             end;
         {ok, _} ->
             not_encrypted;
@@ -1093,10 +1101,10 @@ extract_header(
         true ->
             {ok, {KeyID, WrappedKey, IV}};
         false ->
-            {error, corrupted_header}
+            {error, corrupted_encryption_header}
     end;
 extract_header(_) ->
-    {error, corrupted_header}.
+    {error, corrupted_encryption_header}.
 
 check_header(Bin) ->
     Data = binary:part(Bin, 0, byte_size(Bin) - 32),
