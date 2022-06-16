@@ -644,7 +644,7 @@ handle_call({truncate, Pos}, _From, #file{fd = Fd, dek = DEK} = File0) when
             case file:truncate(Fd) of
                 ok ->
                     File1 = File0#file{eof = 0},
-                    IV = crypto:strong_rand_bytes(16),
+                    IV = new_aes_iv(),
                     case write_encryption_header(File1, KeyID, WEK, IV) of
                         {ok, File2} ->
                             ok = file:sync(File2#file.fd),
@@ -998,7 +998,7 @@ init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
         {db_name, DbName} ->
             case couch_encryption_manager:new_dek(DbName) of
                 {ok, KeyID, DEK, WEK} ->
-                    IV = crypto:strong_rand_bytes(16),
+                    IV = new_aes_iv(),
                     case write_encryption_header(File0, KeyID, WEK, IV) of
                         {ok, File1} ->
                             ok = file:sync(File1#file.fd),
@@ -1139,6 +1139,9 @@ encrypted_pread(#file{} = File, Pos, Len) ->
         Else ->
             Else
     end.
+
+new_aes_iv() ->
+    crypto:strong_rand_bytes(16).
 
 aes_ctr(IV, Pos) ->
     <<(IV + (Pos div 16)):128>>.
