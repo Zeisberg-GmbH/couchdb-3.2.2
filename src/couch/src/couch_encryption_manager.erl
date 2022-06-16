@@ -12,17 +12,14 @@
 
 -module(couch_encryption_manager).
 
--export([key_id/1, new_dek/1, unwrap_dek/2, encryption_options/1]).
+-export([new_dek/1, unwrap_dek/2, encryption_options/1]).
 
--spec key_id(DbName :: binary()) -> KeyID :: binary() | false.
-key_id(_DbName) ->
-    <<"default">>.
-
--spec new_dek(KeyID :: binary()) -> {ok, DEK :: binary(), WEK :: binary()} | dont_encrypt | {error, Reason :: term()}.
-new_dek(<<"default">> = KeyID) ->
+-spec new_dek(DbName :: binary()) -> {ok, KeyID :: binary(), DEK :: binary(), WEK :: binary()} | dont_encrypt | {error, Reason :: term()}.
+new_dek(_DbName) ->
+    KeyID = <<"default">>,
     KEK = <<0:256>>,
     DEK = crypto:strong_rand_bytes(32),
-    {ok, DEK, wrap_key(KeyID, KEK, DEK)};
+    {ok, KeyID, DEK, wrap_key(KeyID, KEK, DEK)};
 new_dek(_) ->
     {error, invalid_key_id}.
 
@@ -33,9 +30,9 @@ unwrap_dek(<<"default">> = KeyID, WEK) ->
 
 %% Extract just the encryption related options from an options list.
 encryption_options(Options) ->
-    case lists:keyfind(key_id, 1, Options) of
+    case lists:keyfind(db_name, 1, Options) of
         false -> [];
-        {key_id, KeyID} -> [{key_id, KeyID}]
+        {db_name, DbName} -> [{db_name, DbName}]
     end.
 
 wrap_key(KeyID, KEK, DEK) when is_binary(KEK), is_binary(DEK) ->

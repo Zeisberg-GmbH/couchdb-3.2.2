@@ -38,11 +38,7 @@ init({Engine, DbName, FilePath, Options0}) ->
     update_idle_limit_from_config(),
     DefaultSecObj = default_security_object(DbName),
     Options =
-        [{default_security_object, DefaultSecObj} | Options0] ++
-            case couch_encryption_manager:key_id(DbName) of
-                false -> [];
-                KeyID -> [{key_id, KeyID}]
-            end,
+        [{db_name, DbName}, {default_security_object, DefaultSecObj} | Options0],
     try
         {ok, EngineState} = couch_db_engine:init(Engine, FilePath, Options),
         Db = init_db(DbName, FilePath, EngineState, Options),

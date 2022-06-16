@@ -994,10 +994,10 @@ reset_eof(#file{} = File) ->
 
 %% new file.
 init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
-    case lists:keyfind(key_id, 1, Options) of
-        {key_id, KeyID} ->
-            case couch_encryption_manager:new_dek(KeyID) of
-                {ok, DEK, WEK} ->
+    case lists:keyfind(db_name, 1, Options) of
+        {db_name, DbName} ->
+            case couch_encryption_manager:new_dek(DbName) of
+                {ok, KeyID, DEK, WEK} ->
                     IV = crypto:strong_rand_bytes(16),
                     case write_encryption_header(File0, KeyID, WEK, IV) of
                         {ok, File1} ->

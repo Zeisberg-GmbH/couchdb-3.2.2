@@ -54,12 +54,7 @@ start(#st{} = St, DbName, Options, Parent) ->
     couch_db_engine:trigger_on_compact(DbName),
 
     ?COMP_EVENT(init),
-    EncryptionOptions =
-        case couch_encryption_manager:key_id(DbName) of
-            false -> [];
-            KeyID -> [{key_id, KeyID}]
-        end,
-    {ok, InitCompSt} = open_compaction_files(DbName, St, Options ++ EncryptionOptions),
+    {ok, InitCompSt} = open_compaction_files(DbName, St, [{db_name, DbName} | Options]),
     ?COMP_EVENT(files_opened),
 
     Stages = [
