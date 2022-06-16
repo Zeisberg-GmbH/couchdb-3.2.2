@@ -12,17 +12,24 @@
 
 -module(couch_encryption_manager).
 
--export([key_id/1, key/1, encryption_options/1]).
+-export([key_id/1, new_dek/1, unwrap_dek/2, encryption_options/1]).
 
 -spec key_id(DbName :: binary()) -> KeyID :: binary() | false.
 key_id(_DbName) ->
     <<"default">>.
 
--spec key(KeyID :: binary()) -> KEK :: binary() | not_found.
-key(<<"default">>) ->
-    <<0:256>>;
-key(_) ->
-    not_found.
+-spec new_dek(KeyID :: binary()) -> {ok, DEK :: binary(), WEK :: binary()} | dont_encrypt | {error, Reason :: term()}.
+new_dek(<<"default">> = KeyID) ->
+    KEK = <<0:256>>,
+    DEK = crypto:strong_rand_bytes(32),
+    {ok, DEK, wrap_key(KeyID, KEK, DEK)};
+new_dek(_) ->
+    {error, invalid_key_id}.
+
+-spec unwrap_dek(KeyID :: binary(), WEK :: binary()) -> {ok, DEK :: binary()} | {error, Reason :: term()}.
+unwrap_dek(<<"default">> = KeyID, WEK) ->
+    KEK = <<0:256>>,
+    unwrap_key(KeyID, KEK, WEK).
 
 %% Extract just the encryption related options from an options list.
 encryption_options(Options) ->
@@ -30,3 +37,21 @@ encryption_options(Options) ->
         false -> [];
         {key_id, KeyID} -> [{key_id, KeyID}]
     end.
+
+wrap_key(KeyID, KEK, DEK) when is_binary(KEK), is_binary(DEK) ->
+    IV = crypto:strong_rand_bytes(16),
+    {<<_:32/binary>> = CipherText, <<_:16/binary>> = CipherTag} =
+        crypto:crypto_one_time_aead(aes_256_gcm, KEK, IV, DEK, KeyID, 16, true),
+    <<IV:16/binary, CipherText/binary, CipherTag/binary>>.
+
+unwrap_key(KeyID, KEK, <<IV:16/binary, CipherText:32/binary, CipherTag:16/binary>>) when
+    is_binary(KEK)
+->
+    case crypto:crypto_one_time_aead(aes_256_gcm, KEK, IV, CipherText, KeyID, CipherTag, false) of
+        error ->
+            {error, unwrap_failed};
+        DEK ->
+            {ok, DEK}
+    end;
+unwrap_key(_KeyID, _KEK, _) ->
+    {error, malformed_wrapped_key}.

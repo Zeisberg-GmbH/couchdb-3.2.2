@@ -28,6 +28,7 @@
 
 %% Database encryption design details
 
+%% TODO REWRITE
 %% If, at couch_file creation time, encryption is enabled, couch_file
 %% generates a random 256-bit AES data encryption key and a random 128
 %% bit initialisation vector. A key-encrypting key is passed to
@@ -64,12 +65,6 @@
     )
 ).
 
--define(aes_gcm_encrypt(Key, IV, AAD, Data),
-    crypto:block_encrypt(aes_gcm, Key, IV, {AAD, Data, 16})),
-
--define(aes_gcm_decrypt(Key, IV, AAD, CipherText, CipherTag),
-    crypto:block_decrypt(aes_gcm, Key, IV, {AAD, CipherText, CipherTag})).
-
 -ifdef(OTP_RELEASE).
 -if(?OTP_RELEASE >= 22).
 
@@ -81,16 +76,6 @@
 -undef(decrypt_ctr).
 -define(decrypt_ctr(File, Pos, Data),
     crypto:crypto_one_time(aes_256_ctr, File#file.dek, aes_ctr(File#file.iv, Pos), Data, false)
-).
-
--undef(aes_gcm_encrypt).
--define(aes_gcm_encrypt(Key, IV, AAD, Data),
-    crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, Data, AAD, 16, true)
-).
-
--undef(aes_gcm_decrypt).
--define(aes_gcm_decrypt(Key, IV, AAD, CipherText, CipherTag),
-    crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, CipherText, AAD, CipherTag, false)
 ).
 
 -endif.
@@ -1011,12 +996,8 @@ reset_eof(#file{} = File) ->
 init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
     case lists:keyfind(key_id, 1, Options) of
         {key_id, KeyID} ->
-            case couch_encryption_manager:key(KeyID) of
-                false ->
-                    {ok, File0};
-                KEK ->
-                    DEK = crypto:strong_rand_bytes(32),
-                    WEK = wrap_key(KeyID, KEK, DEK),
+            case couch_encryption_manager:new_dek(KeyID) of
+                {ok, DEK, WEK} ->
                     IV = crypto:strong_rand_bytes(16),
                     case write_encryption_header(File0, KeyID, WEK, IV) of
                         {ok, File1} ->
@@ -1024,7 +1005,11 @@ init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
                             {ok, init_crypto_file(File1, DEK, IV)};
                         {error, Reason} ->
                             {error, Reason}
-                    end
+                    end;
+                dont_encrypt ->
+                    {ok, File0};
+                {error, Reason} ->
+                    {error, Reason}
             end;
         false ->
             {ok, File0}
@@ -1033,16 +1018,11 @@ init_crypto(#file{eof = 0, dek = undefined} = File0, Options) ->
 init_crypto(#file{eof = Eof, dek = undefined} = File, _Options) when Eof >= ?SIZE_BLOCK ->
     case read_encryption_header(File) of
         {ok, {KeyID, WEK, IV}} ->
-            case couch_encryption_manager:key(KeyID) of
-                not_found ->
-                    {error, <<"required encryption key not found">>};
-                KEK ->
-                    case unwrap_key(KeyID, KEK, WEK) of
-                        error ->
-                            {error, <<"failed to unwrap encryption key">>};
-                        DEK when is_binary(DEK) ->
-                            {ok, init_crypto_file(File, DEK, IV)}
-                    end
+            case couch_encryption_manager:unwrap_dek(KeyID, WEK) of                
+                {ok, DEK} ->
+                    {ok, init_crypto_file(File, DEK, IV)};
+                {error, Reason} ->
+                    {error, Reason}
             end;
         not_encrypted ->
             {ok, File};
@@ -1052,18 +1032,6 @@ init_crypto(#file{eof = Eof, dek = undefined} = File, _Options) when Eof >= ?SIZ
 
 init_crypto_file(#file{} = File, DEK, IV) when is_binary(DEK), is_binary(IV) ->
     File#file{iv = crypto:bytes_to_integer(IV), dek = DEK}.
-
-wrap_key(KeyID, KEK, DEK) when is_binary(KEK), is_binary(DEK) ->
-    IV = crypto:strong_rand_bytes(16),
-    {<<_:32/binary>> = CipherText, <<_:16/binary>> = CipherTag} = ?aes_gcm_encrypt(
-        KEK, IV, KeyID, DEK
-    ),
-    <<IV:16/binary, CipherText/binary, CipherTag/binary>>.
-
-unwrap_key(KeyID, KEK, <<IV:16/binary, CipherText:32/binary, CipherTag:16/binary>>) when
-    is_binary(KEK)
-->
-    ?aes_gcm_decrypt(KEK, IV, KeyID, CipherText, CipherTag).
 
 write_encryption_header(#file{eof = 0} = File, KeyID, WrappedKey, IV) when
     bit_size(KeyID) =< 128, bit_size(WrappedKey) == 512, bit_size(IV) == 128
