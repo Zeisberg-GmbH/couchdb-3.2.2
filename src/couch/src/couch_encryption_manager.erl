@@ -14,25 +14,39 @@
 
 -export([new_dek/1, unwrap_dek/2, encryption_options/1]).
 
--spec new_dek(DbName :: binary()) ->
+-callback new_dek(DbName :: binary()) ->
     {ok, KeyID :: binary(), DEK :: binary(), WEK :: binary()}
     | dont_encrypt
     | {error, Reason :: term()}.
-new_dek(_DbName) ->
-    KeyID = <<"default">>,
-    KEK = <<0:256>>,
-    DEK = crypto:strong_rand_bytes(32),
-    {ok, KeyID, DEK, wrap_key(KeyID, KEK, DEK)};
-new_dek(_) ->
-    {error, invalid_key_id}.
 
--spec unwrap_dek(KeyID :: binary(), WEK :: binary()) ->
+-callback unwrap_dek(KeyID :: binary(), WEK :: binary()) ->
     {ok, DEK :: binary()}
     | {ok, NewKeyID :: binary(), DEK :: binary(), NewWEK :: binary()}
     | {error, Reason :: term()}.
-unwrap_dek(<<"default">> = KeyID, WEK) ->
-    KEK = <<0:256>>,
-    unwrap_key(KeyID, KEK, WEK).
+
+new_dek(DbName) ->
+    case manager() of
+        undefined ->
+            dont_encrypt;
+        Module ->
+           Module:new_dek(DbName)
+    end.
+
+unwrap_dek(KeyID, WEK) ->
+    case manager() of
+        undefined ->
+            {error, encryption_not_supported};
+        Manager ->
+            Manager:unwrap_dek(KeyID, WEK)
+    end.
+
+manager() ->
+    case config:get("encryption", "manager") of
+        undefined ->
+            undefined;
+        Module ->
+            list_to_atom(Module)
+    end.
 
 %% Extract just the encryption related options from an options list.
 encryption_options(Options) ->
@@ -40,21 +54,3 @@ encryption_options(Options) ->
         false -> [];
         {db_name, DbName} -> [{db_name, DbName}]
     end.
-
-wrap_key(KeyID, KEK, DEK) when is_binary(KEK), is_binary(DEK) ->
-    IV = crypto:strong_rand_bytes(16),
-    {<<_:32/binary>> = CipherText, <<_:16/binary>> = CipherTag} =
-        crypto:crypto_one_time_aead(aes_256_gcm, KEK, IV, DEK, KeyID, 16, true),
-    <<IV:16/binary, CipherText/binary, CipherTag/binary>>.
-
-unwrap_key(KeyID, KEK, <<IV:16/binary, CipherText:32/binary, CipherTag:16/binary>>) when
-    is_binary(KEK)
-->
-    case crypto:crypto_one_time_aead(aes_256_gcm, KEK, IV, CipherText, KeyID, CipherTag, false) of
-        error ->
-            {error, unwrap_failed};
-        DEK ->
-            {ok, DEK}
-    end;
-unwrap_key(_KeyID, _KEK, _) ->
-    {error, malformed_wrapped_key}.
